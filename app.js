@@ -256,15 +256,34 @@ async function initCamera() {
 function updateCanvasDimensions() {
   if (!video.videoWidth) return;
   
-  // Base video bounds
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  
-  // Set CSS Aspect ratio container class for proper view cropping
+  let targetAspect = 3/4; // Default 4:3 portrait (viewfinder is 3:4 vertical)
   let aspectVal = '3/4';
-  if (appState.aspectRatio === '16:9') aspectVal = '9/16';
-  else if (appState.aspectRatio === '1:1') aspectVal = '1/1';
   
+  if (appState.aspectRatio === '16:9') {
+    targetAspect = 9/16;
+    aspectVal = '9/16';
+  } else if (appState.aspectRatio === '1:1') {
+    targetAspect = 1/1;
+    aspectVal = '1/1';
+  }
+  
+  const streamAspect = video.videoWidth / video.videoHeight;
+  let w = video.videoWidth;
+  let h = video.videoHeight;
+  
+  if (streamAspect > targetAspect) {
+    // Stream is wider than target aspect ratio (e.g. landscape webcam or wide portrait)
+    h = video.videoHeight;
+    w = video.videoHeight * targetAspect;
+  } else {
+    // Stream is narrower than target aspect ratio
+    w = video.videoWidth;
+    h = video.videoWidth / targetAspect;
+  }
+  
+  // Set the canvas resolution to match the cropped size exactly
+  canvas.width = Math.round(w);
+  canvas.height = Math.round(h);
   canvas.style.aspectRatio = aspectVal;
 }
 
@@ -292,23 +311,56 @@ function renderLoop() {
   // Clear canvas frames
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
+  // Enable high quality image smoothing
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  
   // Mirror canvas transform for standard front-facing user viewpoint
   if (appState.mirror) {
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
   }
   
-  // Draw primary raw stream onto the rendering pipeline canvas
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  // Calculate source bounds to center-crop the video frame onto the canvas
+  let targetAspect = 3/4;
+  if (appState.aspectRatio === '16:9') targetAspect = 9/16;
+  else if (appState.aspectRatio === '1:1') targetAspect = 1/1;
+  
+  const streamAspect = video.videoWidth / video.videoHeight;
+  let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+  
+  if (streamAspect > targetAspect) {
+    sw = video.videoHeight * targetAspect;
+    sx = (video.videoWidth - sw) / 2;
+  } else {
+    sh = video.videoWidth / targetAspect;
+    sy = (video.videoHeight - sh) / 2;
+  }
+  
+  // Draw center-cropped raw stream onto the rendering pipeline canvas
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   ctx.restore();
   
-  // 1. Process Brightness / Exposure fallback filter
+  // 1. Process combined Exposure Value (EV) and ISO brightness fallback filter
   let filterStr = '';
+  let brightnessVal = 100; // base brightness
+  
   if (appState.exposure !== 0) {
-    // exposure ranges -2.0 to +2.0 -> mapped to brightness 50% to 150%
-    const brightness = Math.round(100 + (appState.exposure * 25));
-    filterStr += `brightness(${brightness}%) `;
+    brightnessVal += (appState.exposure * 25); // -50% to +50%
   }
+  
+  if (appState.iso !== 'auto') {
+    const isoVal = parseInt(appState.iso);
+    if (isoVal === 50) brightnessVal -= 15;
+    else if (isoVal === 200) brightnessVal += 10;
+    else if (isoVal === 400) brightnessVal += 25;
+    else if (isoVal === 800) brightnessVal += 40;
+    else if (isoVal === 1600) brightnessVal += 55;
+    else if (isoVal === 3200) brightnessVal += 75;
+  }
+  
+  brightnessVal = Math.max(10, Math.round(brightnessVal));
+  filterStr += `brightness(${brightnessVal}%) `;
   
   // 2. Process simulated blur focus distance fallback
   if (appState.focus !== 'auto') {
@@ -331,13 +383,13 @@ function renderLoop() {
       // Warm Amber tint for high kelvins (orange overlay)
       const opacity = ((temp - 5500) / 2500) * 0.22; // max opacity 22%
       ctx.fillStyle = `rgba(229, 193, 88, ${opacity})`;
-      ctx.globalCompositeOperation = 'color-burn';
+      ctx.globalCompositeOperation = 'soft-light';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     } else if (temp < 5500) {
       // Cool Ice Blue tint for low kelvins (cyan overlay)
       const opacity = ((5500 - temp) / 3000) * 0.22; // max opacity 22%
       ctx.fillStyle = `rgba(64, 156, 255, ${opacity})`;
-      ctx.globalCompositeOperation = 'color-burn';
+      ctx.globalCompositeOperation = 'soft-light';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
     ctx.restore();
@@ -571,48 +623,20 @@ async function executeSnapshot() {
   // Play camera shutter sound
   playShutterSound();
   
-  // 2. Grab current frame pixels from processing canvas
+  // 2. Grab current frame pixels from processing canvas (which is already center-cropped)
   let captureCanvas = document.createElement('canvas');
   captureCanvas.width = canvas.width;
   captureCanvas.height = canvas.height;
   const cCtx = captureCanvas.getContext('2d');
   
+  // Ensure maximum smoothing quality on capture
+  cCtx.imageSmoothingEnabled = true;
+  cCtx.imageSmoothingQuality = 'high';
+  
   // Copy active canvas pixels directly
   cCtx.drawImage(canvas, 0, 0);
   
-  // Crop captured canvas center to match viewfinder aspect ratio exactly
-  let targetW = canvas.width;
-  let targetH = canvas.height;
-  let startX = 0;
-  let startY = 0;
-  
-  let targetAspect = 3/4; // Default 4:3 portrait (viewfinder is 3:4 portrait style)
-  if (appState.aspectRatio === '16:9') targetAspect = 9/16;
-  else if (appState.aspectRatio === '1:1') targetAspect = 1/1;
-  
-  const currentAspect = canvas.width / canvas.height;
-  
-  if (currentAspect > targetAspect) {
-    // Canvas is wider than target aspect ratio (landscape webcam or wider portrait)
-    targetH = canvas.height;
-    targetW = canvas.height * targetAspect;
-    startX = (canvas.width - targetW) / 2;
-  } else if (currentAspect < targetAspect) {
-    // Canvas is taller than target aspect ratio (narrower portrait)
-    targetW = canvas.width;
-    targetH = canvas.width / targetAspect;
-    startY = (canvas.height - targetH) / 2;
-  }
-  
-  // Create new cropped canvas
-  const croppedCanvas = document.createElement('canvas');
-  croppedCanvas.width = targetW;
-  croppedCanvas.height = targetH;
-  const crCtx = croppedCanvas.getContext('2d');
-  crCtx.drawImage(captureCanvas, startX, startY, targetW, targetH, 0, 0, targetW, targetH);
-  captureCanvas = croppedCanvas;
-  
-  // Save captured canvas to blob
+  // Save captured canvas to blob with 98% high quality compression
   captureCanvas.toBlob(async (blob) => {
     if (!blob) {
       showToast("Error: Capture Failed");
@@ -651,7 +675,7 @@ async function executeSnapshot() {
     
     appState.isCapturing = false;
     shutterBtn.disabled = false;
-  }, 'image/jpeg', 0.94);
+  }, 'image/jpeg', 0.98);
 }
 
 // --- IndexedDB Access Operations ---
@@ -820,9 +844,12 @@ function setupUIListeners() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Position target focus ring indicator
-    manualFocusRing.style.left = `${e.clientX}px`;
-    manualFocusRing.style.top = `${e.clientY}px`;
+    // Position target focus ring indicator relative to the viewport container parent
+    const parentRect = canvas.parentElement.getBoundingClientRect();
+    const ringX = e.clientX - parentRect.left;
+    const ringY = e.clientY - parentRect.top;
+    manualFocusRing.style.left = `${ringX}px`;
+    manualFocusRing.style.top = `${ringY}px`;
     manualFocusRing.classList.add('active');
     
     // Quick vibration/tactile click if supported
