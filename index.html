@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#08080a">
+  
+  <title>ProCam Front</title>
+  
+  <!-- Manifest & Favicon -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon.svg">
+  
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  
+  <div id="app-container">
+    
+    <!-- Top HUD Header Control Panel -->
+    <header id="hud-header">
+      <!-- Aspect Ratio Switcher -->
+      <button id="ratio-btn" class="hud-btn" title="Aspect Ratio">
+        <span>4:3</span>
+      </button>
+      
+      <!-- Grid Selector -->
+      <button id="grid-btn" class="hud-btn" title="Grid Lines">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 10h5V5H4v5zm0 5h5v-5H4v5zm0 5h5v-5H4v5zm6-10h5V5h-5v5zm0 5h5v-5h-5v5zm0 5h5v-5h-5v5zm6-15v5h5V5h-5zm0 10h5v-5h-5v5zm0 5h5v-5h-5v5z"/>
+        </svg>
+      </button>
+      
+      <!-- Spirit Level Toggle -->
+      <button id="level-btn" class="hud-btn" title="Spirit Level">
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M2 12h20M12 2v20" stroke="currentColor" stroke-dasharray="2 2" stroke-width="1.5"/>
+        </svg>
+      </button>
+      
+      <!-- Front Mirror Toggle -->
+      <button id="mirror-btn" class="hud-btn active" title="Mirror Front View">
+        <svg viewBox="0 0 24 24">
+          <path d="M19.78 3.22a1 1 0 0 0-1.41 0L17 4.59A10.03 10.03 0 0 0 12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10a10.02 10.02 0 0 0-1.8-5.61l1.58-1.58a1 1 0 0 0 0-1.59zM12 20c-4.41 0-8-3.59-8-8s3.59-8 8-8v4l5-5-5-5v4c-5.52 0-10 4.48-10 10s4.48 10 10 10z"/>
+        </svg>
+      </button>
+      
+      <!-- Timer Toggle -->
+      <button id="timer-btn" class="hud-btn" title="Timer">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 18c-4.4 0-8-3.6-8-8s3.6-8 8-8 8 3.6 8 8-3.6 8-8 8zm1-13h-2v6l5.2 3.2 1-1.6-4.2-2.6V7z"/>
+        </svg>
+      </button>
+    </header>
+    
+    <!-- Viewfinder Area -->
+    <main id="viewport-container">
+      <!-- Raw Video Track -->
+      <video id="video-preview" autoplay playsinline muted></video>
+      
+      <!-- Canvas Renderer (For live pro shaders, level guidelines, snapshots) -->
+      <canvas id="canvas-preview"></canvas>
+      
+      <!-- Grid Overlay lines -->
+      <div id="grid-overlay" data-grid="off">
+        <div class="grid-line v1"></div>
+        <div class="grid-line v2"></div>
+        <div class="grid-line h1"></div>
+        <div class="grid-line h2"></div>
+      </div>
+      
+      <!-- Live Spirit Level Overlay -->
+      <div id="level-overlay">
+        <div class="level-ring">
+          <div class="level-line-h"></div>
+          <div class="level-target-dot"></div>
+          <div class="level-center-dot"></div>
+        </div>
+      </div>
+      
+      <!-- Manual Focus Ring UI -->
+      <div id="manual-focus-ring"></div>
+      
+      <!-- Live Status Readout Badges -->
+      <section id="status-indicators">
+        <div class="status-badge" id="status-iso">ISO: <span>AUTO</span></div>
+        <div class="status-badge" id="status-ev">EV: <span>0.0</span></div>
+        <div class="status-badge" id="status-wb">WB: <span>AUTO</span></div>
+        <div class="status-badge" id="status-foc">FOC: <span>AUTO</span></div>
+      </section>
+      
+      <!-- Real-time Luminance Histogram -->
+      <div id="histogram-container">
+        <canvas id="histogram-canvas" width="90" height="50"></canvas>
+      </div>
+      
+      <!-- Countdown timer graphic overlay -->
+      <div id="timer-overlay">
+        <div id="timer-number">3</div>
+      </div>
+      
+      <!-- Toast popup feedback -->
+      <div id="toast-notification">Settings Reset</div>
+      
+      <!-- Capture Camera Flash animation panel -->
+      <div id="flash-overlay"></div>
+    </main>
+    
+    <!-- Bottom Panel (Controls, Sliders, Actions) -->
+    <footer id="bottom-panel">
+      <!-- Pro Control Horizontally Scrolling Bar -->
+      <nav id="pro-menu-scroller">
+        <div id="pro-menu-list">
+          <button class="pro-menu-item active" data-control="auto">
+            AUTO
+            <span class="val">RESTORE</span>
+          </button>
+          <button class="pro-menu-item" data-control="exposure">
+            EV
+            <span class="val" id="menu-val-exposure">0.0</span>
+          </button>
+          <button class="pro-menu-item" data-control="iso">
+            ISO
+            <span class="val" id="menu-val-iso">AUTO</span>
+          </button>
+          <button class="pro-menu-item" data-control="whitebalance">
+            WB
+            <span class="val" id="menu-val-whitebalance">AUTO</span>
+          </button>
+          <button class="pro-menu-item" data-control="focus">
+            FOCUS
+            <span class="val" id="menu-val-focus">AUTO</span>
+          </button>
+        </div>
+      </nav>
+      
+      <!-- Dial Control Settings adjustment -->
+      <div id="dial-container">
+        <div id="dial-label-value">EXPOSURE: 0.0 EV</div>
+        <div class="dial-slider-wrapper">
+          <!-- Dial marks backgrounds -->
+          <div class="dial-ticks-bg">
+            <div class="dial-tick major"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick major"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick major"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick"></div>
+            <div class="dial-tick major"></div>
+          </div>
+          <input type="range" id="dial-range-input" class="dial-range" min="-2" max="2" step="0.1" value="0">
+        </div>
+      </div>
+      
+      <!-- Main Camera Trigger Actions Row -->
+      <div id="actions-row">
+        <!-- Gallery Thumbnail button -->
+        <button id="gallery-thumb-btn" class="aux-btn" title="View Gallery">
+          <svg class="empty-thumb-svg" viewBox="0 0 24 24">
+            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+          </svg>
+        </button>
+        
+        <!-- Large shutter button -->
+        <div id="shutter-container">
+          <button id="shutter-btn" title="Capture Photo">
+            <div id="shutter-btn-inner"></div>
+          </button>
+        </div>
+        
+        <!-- Quick Reset Buttons or simulated level lines toggle -->
+        <button id="reset-pro-btn" class="aux-btn" title="Reset Pro Controls">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
+          </svg>
+        </button>
+      </div>
+      
+      <!-- Mode Tabs (Quick aesthetics) -->
+      <div id="mode-selector">
+        <span class="mode-tab" id="mode-tab-photo">Photo</span>
+        <span class="mode-tab active" id="mode-tab-pro">Pro Mode</span>
+      </div>
+    </footer>
+    
+  </div>
+
+  <!-- PWA Gallery Overlay Slide Panel -->
+  <div id="gallery-panel">
+    <header id="gallery-header">
+      <button id="gallery-back-btn" class="hud-btn" title="Go Back">
+        <svg viewBox="0 0 24 24">
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </button>
+      <div id="gallery-title">Local Gallery</div>
+      <div style="width:40px;"></div> <!-- Spacer -->
+    </header>
+    
+    <div id="gallery-grid-container">
+      <div id="gallery-grid">
+        <!-- Rendered dynamically -->
+      </div>
+      
+      <!-- Empty gallery indicator -->
+      <div id="gallery-empty-state">
+        <svg viewBox="0 0 24 24">
+          <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+        </svg>
+        <p>No photos captured yet</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fullscreen Image Viewer Modal -->
+  <div id="photo-viewer">
+    <header id="viewer-header">
+      <button id="viewer-back-btn" class="hud-btn" title="Back to Gallery">
+        <svg viewBox="0 0 24 24">
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </button>
+      <div id="viewer-title" style="font-size:14px; font-weight:600;">Photo Details</div>
+      <div style="width:40px;"></div> <!-- Spacer -->
+    </header>
+    
+    <div id="viewer-content">
+      <img id="viewer-img" src="" alt="Captured Image">
+      
+      <!-- Live dynamic text info -->
+      <div id="viewer-metadata">
+        <div>Captured: <span id="meta-date">June 12, 2026</span></div>
+        <div>Settings: <span id="meta-settings">ISO 100 • EV 0.0 • WB 5000K • FOC AUTO</span></div>
+      </div>
+    </div>
+    
+    <footer id="viewer-footer">
+      <button id="viewer-delete-btn" class="viewer-btn delete-btn" title="Delete Photo">
+        <svg viewBox="0 0 24 24">
+          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+        </svg>
+        Delete
+      </button>
+      
+      <button id="viewer-share-btn" class="viewer-btn" title="Share Photo">
+        <svg viewBox="0 0 24 24">
+          <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>
+        </svg>
+        Share
+      </button>
+      
+      <button id="viewer-download-btn" class="viewer-btn" title="Download to Device">
+        <svg viewBox="0 0 24 24">
+          <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+        </svg>
+        Download
+      </button>
+    </footer>
+  </div>
+
+  <!-- Main JavaScript File -->
+  <script src="app.js"></script>
+  
+  <!-- PWA Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then((reg) => console.log('Service Worker registered successfully!', reg.scope))
+          .catch((err) => console.error('Service Worker registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>

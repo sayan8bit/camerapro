@@ -1,0 +1,25 @@
+{
+  "name": "ProCam Front - Professional Front Camera",
+  "short_name": "ProCam Front",
+  "description": "A premium front-camera application with manual controls, real-time filters, live histogram, and spirit level.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0a0a0c",
+  "theme_color": "#0a0a0c",
+  "orientation": "portrait-primary",
+  "categories": ["photo", "utilities"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
