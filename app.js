@@ -100,8 +100,11 @@ const miniCtx = miniCanvas.getContext('2d');
 
 // Offscreen noise-canvases for dynamic ISO chromatic grain
 let noiseCanvases = [];
+let noisePatterns = [];
+let lastAppliedFilter = '';
 function initNoiseCanvases() {
   noiseCanvases = [];
+  noisePatterns = [];
   for (let k = 0; k < 4; k++) {
     const nCanvas = document.createElement('canvas');
     nCanvas.width = 128;
@@ -125,6 +128,10 @@ function initNoiseCanvases() {
     }
     nCtx.putImageData(imgData, 0, 0);
     noiseCanvases.push(nCanvas);
+    
+    // Pre-compile the CanvasPattern for extreme 60 FPS drawing efficiency
+    const pattern = ctx.createPattern(nCanvas, 'repeat');
+    noisePatterns.push(pattern);
   }
 }
 
@@ -367,25 +374,24 @@ function renderLoop() {
   if (appState.iso !== 'auto') {
     const isoVal = parseInt(appState.iso);
     if (isoVal === 50) {
-      brightness *= 0.85;
+      brightness *= 0.4;
     } else if (isoVal === 100) {
-      brightness *= 1.0;
+      brightness *= 0.7;
     } else if (isoVal === 200) {
-      brightness *= 1.15;
-      grainOpacity = 0.015;
+      brightness *= 1.0;
     } else if (isoVal === 400) {
-      brightness *= 1.35;
+      brightness *= 1.4;
       grainOpacity = 0.03;
     } else if (isoVal === 800) {
-      brightness *= 1.6;
+      brightness *= 1.9;
       contrast = 1.05;
       grainOpacity = 0.06;
     } else if (isoVal === 1600) {
-      brightness *= 1.9;
+      brightness *= 2.6;
       contrast = 1.10;
       grainOpacity = 0.10;
     } else if (isoVal === 3200) {
-      brightness *= 2.3;
+      brightness *= 3.5;
       contrast = 1.15;
       grainOpacity = 0.15;
     }
@@ -409,40 +415,40 @@ function renderLoop() {
     filterStr += ` blur(${blurPx.toFixed(1)}px)`;
   }
   
-  // Apply accumulative CSS filter adjustments directly to canvas DOM element for GPU-composited speed
-  canvas.style.filter = filterStr;
+  // Apply accumulative CSS filter adjustments directly to canvas DOM element, skipping DOM changes when unchanged
+  if (filterStr !== lastAppliedFilter) {
+    canvas.style.filter = filterStr;
+    lastAppliedFilter = filterStr;
+  }
   
   // Make sure 2D context filter is none to avoid canvas redraw lag
   ctx.filter = 'none';
   
-  // 3. Process Color Temperature / White Balance tint overlay
+  // 3. Process Color Temperature / White Balance tint overlay (optimized using source-over for pure GPU speed)
   if (appState.whitebalance !== 'auto') {
     const temp = parseInt(appState.whitebalance);
     ctx.save();
     if (temp > 5500) {
       // Warm Amber tint for high kelvins (orange overlay)
-      const opacity = ((temp - 5500) / 2500) * 0.22; // max opacity 22%
+      const opacity = ((temp - 5500) / 2500) * 0.15; // max opacity 15%
       ctx.fillStyle = `rgba(229, 193, 88, ${opacity})`;
-      ctx.globalCompositeOperation = 'soft-light';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     } else if (temp < 5500) {
       // Cool Ice Blue tint for low kelvins (cyan overlay)
-      const opacity = ((5500 - temp) / 3000) * 0.22; // max opacity 22%
+      const opacity = ((5500 - temp) / 3000) * 0.15; // max opacity 15%
       ctx.fillStyle = `rgba(64, 156, 255, ${opacity})`;
-      ctx.globalCompositeOperation = 'soft-light';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
     ctx.restore();
   }
   
-  // 4. Process ISO High gain chromatic dynamic grain noise overlay
-  if (grainOpacity > 0 && noiseCanvases.length > 0) {
+  // 4. Process ISO High gain chromatic dynamic grain noise overlay (reusing pre-compiled patterns)
+  if (grainOpacity > 0 && noisePatterns.length > 0) {
     ctx.save();
     ctx.globalAlpha = grainOpacity;
     ctx.globalCompositeOperation = 'overlay';
-    // Randomize pattern among dynamic cache to make grain buzz
-    const randNoiseCanvas = noiseCanvases[Math.floor(Math.random() * noiseCanvases.length)];
-    const pattern = ctx.createPattern(randNoiseCanvas, 'repeat');
+    // Randomize pattern among dynamic pre-compiled cache to make grain buzz (no runtime compilation)
+    const pattern = noisePatterns[Math.floor(Math.random() * noisePatterns.length)];
     ctx.fillStyle = pattern;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
@@ -471,12 +477,13 @@ function drawHistogram() {
   let contrast = 1.0;
   if (appState.iso !== 'auto') {
     const isoVal = parseInt(appState.iso);
-    if (isoVal === 50) brightness *= 0.85;
-    else if (isoVal === 200) brightness *= 1.15;
-    else if (isoVal === 400) brightness *= 1.35;
-    else if (isoVal === 800) { brightness *= 1.6; contrast = 1.05; }
-    else if (isoVal === 1600) { brightness *= 1.9; contrast = 1.10; }
-    else if (isoVal === 3200) { brightness *= 2.3; contrast = 1.15; }
+    if (isoVal === 50) brightness *= 0.4;
+    else if (isoVal === 100) brightness *= 0.7;
+    else if (isoVal === 200) brightness *= 1.0;
+    else if (isoVal === 400) brightness *= 1.4;
+    else if (isoVal === 800) { brightness *= 1.9; contrast = 1.05; }
+    else if (isoVal === 1600) { brightness *= 2.6; contrast = 1.10; }
+    else if (isoVal === 3200) { brightness *= 3.5; contrast = 1.15; }
   }
   let blurPx = 0;
   if (appState.focus !== 'auto') {
@@ -518,14 +525,12 @@ function drawHistogram() {
     const temp = parseInt(appState.whitebalance);
     miniCtx.save();
     if (temp > 5500) {
-      const opacity = ((temp - 5500) / 2500) * 0.22;
+      const opacity = ((temp - 5500) / 2500) * 0.15;
       miniCtx.fillStyle = `rgba(229, 193, 88, ${opacity})`;
-      miniCtx.globalCompositeOperation = 'soft-light';
       miniCtx.fillRect(0, 0, 40, 30);
     } else if (temp < 5500) {
-      const opacity = ((5500 - temp) / 3000) * 0.22;
+      const opacity = ((5500 - temp) / 3000) * 0.15;
       miniCtx.fillStyle = `rgba(64, 156, 255, ${opacity})`;
-      miniCtx.globalCompositeOperation = 'soft-light';
       miniCtx.fillRect(0, 0, 40, 30);
     }
     miniCtx.restore();
@@ -771,25 +776,24 @@ async function executeSnapshot() {
   if (appState.iso !== 'auto') {
     const isoVal = parseInt(appState.iso);
     if (isoVal === 50) {
-      brightness *= 0.85;
+      brightness *= 0.4;
     } else if (isoVal === 100) {
-      brightness *= 1.0;
+      brightness *= 0.7;
     } else if (isoVal === 200) {
-      brightness *= 1.15;
-      grainOpacity = 0.015;
+      brightness *= 1.0;
     } else if (isoVal === 400) {
-      brightness *= 1.35;
+      brightness *= 1.4;
       grainOpacity = 0.03;
     } else if (isoVal === 800) {
-      brightness *= 1.6;
+      brightness *= 1.9;
       contrast = 1.05;
       grainOpacity = 0.06;
     } else if (isoVal === 1600) {
-      brightness *= 1.9;
+      brightness *= 2.6;
       contrast = 1.10;
       grainOpacity = 0.10;
     } else if (isoVal === 3200) {
-      brightness *= 2.3;
+      brightness *= 3.5;
       contrast = 1.15;
       grainOpacity = 0.15;
     }
