@@ -86,13 +86,53 @@ html, body {
   transition: transform var(--transition-normal);
 }
 
-/* Hide raw video when canvas filter processor is active */
 #video-preview {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scaleX(-1); /* Mirrored by default for natural selfie feel */
+  z-index: 4;
+}
+
+#video-preview.unmirrored {
+  transform: scaleX(1);
+}
+
+#canvas-preview {
   opacity: 0;
   pointer-events: none;
+  display: none;
 }
-#video-preview.active-fallback {
-  opacity: 1;
+
+/* Color Temperature & dynamic grain overlays matching video size exactly */
+#wb-overlay, #grain-overlay {
+  position: absolute;
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+  transition: opacity var(--transition-normal);
+}
+
+#grain-overlay {
+  z-index: 6;
+  background-repeat: repeat;
+  mix-blend-mode: overlay;
+  opacity: 0;
+}
+
+#grain-overlay.active {
+  animation: noiseShift 0.12s steps(6) infinite;
+}
+
+@keyframes noiseShift {
+  0% { background-position: 0px 0px; }
+  20% { background-position: 20px 40px; }
+  40% { background-position: -40px 20px; }
+  60% { background-position: 50px -20px; }
+  80% { background-position: -20px -50px; }
+  100% { background-position: 40px 40px; }
 }
 
 /* Grid Overlay Overlay styling */
