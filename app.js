@@ -22,6 +22,8 @@ const appState = {
 const video = document.getElementById('video-preview');
 const canvas = document.getElementById('canvas-preview');
 const ctx = canvas.getContext('2d');
+const wbOverlay = document.getElementById('wb-overlay');
+const grainOverlay = document.getElementById('grain-overlay');
 const gridOverlay = document.getElementById('grid-overlay');
 const levelOverlay = document.getElementById('level-overlay');
 const manualFocusRing = document.getElementById('manual-focus-ring');
@@ -102,37 +104,38 @@ const miniCtx = miniCanvas.getContext('2d');
 let noiseCanvases = [];
 let noisePatterns = [];
 let lastAppliedFilter = '';
+let noiseDataURL = '';
 function initNoiseCanvases() {
   noiseCanvases = [];
   noisePatterns = [];
-  for (let k = 0; k < 4; k++) {
-    const nCanvas = document.createElement('canvas');
-    nCanvas.width = 128;
-    nCanvas.height = 128;
-    const nCtx = nCanvas.getContext('2d');
-    const imgData = nCtx.createImageData(128, 128);
-    const data = imgData.data;
-    for (let i = 0; i < data.length; i += 4) {
-      // Base monochrome noise value
-      const val = Math.floor(Math.random() * 100) + 78; // grey noise
-      
-      // Inject chromatic red/blue sensor noise
-      const rNoise = val + (Math.random() * 30 - 15);
-      const gNoise = val + (Math.random() * 20 - 10);
-      const bNoise = val + (Math.random() * 30 - 15);
-      
-      data[i] = Math.max(0, Math.min(255, rNoise));     // R
-      data[i+1] = Math.max(0, Math.min(255, gNoise));   // G
-      data[i+2] = Math.max(0, Math.min(255, bNoise));   // B
-      data[i+3] = 40;                                  // Base alpha for pattern
-    }
-    nCtx.putImageData(imgData, 0, 0);
-    noiseCanvases.push(nCanvas);
+  
+  // Generate a single tiled grain canvas for CSS background repetition
+  const nCanvas = document.createElement('canvas');
+  nCanvas.width = 256;
+  nCanvas.height = 256;
+  const nCtx = nCanvas.getContext('2d');
+  const imgData = nCtx.createImageData(256, 256);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    // Base monochrome noise value
+    const val = Math.floor(Math.random() * 100) + 78; // grey noise
     
-    // Pre-compile the CanvasPattern for extreme 60 FPS drawing efficiency
-    const pattern = ctx.createPattern(nCanvas, 'repeat');
-    noisePatterns.push(pattern);
+    // Inject chromatic red/blue sensor noise for realistic high-ISO film grain
+    const rNoise = val + (Math.random() * 30 - 15);
+    const gNoise = val + (Math.random() * 20 - 10);
+    const bNoise = val + (Math.random() * 30 - 15);
+    
+    data[i] = Math.max(0, Math.min(255, rNoise));     // R
+    data[i+1] = Math.max(0, Math.min(255, gNoise));   // G
+    data[i+2] = Math.max(0, Math.min(255, bNoise));   // B
+    data[i+3] = 45;                                  // Base alpha for pattern
   }
+  nCtx.putImageData(imgData, 0, 0);
+  noiseCanvases.push(nCanvas);
+  
+  // Export to Data URL to set as CSS background pattern
+  noiseDataURL = nCanvas.toDataURL('image/png');
+  grainOverlay.style.backgroundImage = `url(${noiseDataURL})`;
 }
 
 // --- Initialize Database (IndexedDB) ---
@@ -309,6 +312,11 @@ function updateCanvasDimensions() {
   canvas.width = previewW;
   canvas.height = previewH;
   canvas.style.aspectRatio = aspectVal;
+  
+  // Sync aspect ratio directly to raw video preview and GPU overlays
+  video.style.aspectRatio = aspectVal;
+  wbOverlay.style.aspectRatio = aspectVal;
+  grainOverlay.style.aspectRatio = aspectVal;
 }
 
 // Inspect hardware for native Pro sliders support (Android Chrome mainly)
@@ -331,70 +339,56 @@ function renderLoop() {
     return;
   }
   
-  // Clear canvas frames
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  
-  ctx.save();
-  // Enable high quality image smoothing
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  
-  // Mirror canvas transform for standard front-facing user viewpoint
-  if (appState.mirror) {
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-  }
-  
-  // Calculate source bounds to center-crop the video frame onto the canvas
-  let targetAspect = 3/4;
-  if (appState.aspectRatio === '16:9') targetAspect = 9/16;
-  else if (appState.aspectRatio === '1:1') targetAspect = 1/1;
-  
-  const streamAspect = video.videoWidth / video.videoHeight;
-  let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-  
-  if (streamAspect > targetAspect) {
-    sw = video.videoHeight * targetAspect;
-    sx = (video.videoWidth - sw) / 2;
-  } else {
-    sh = video.videoWidth / targetAspect;
-    sy = (video.videoHeight - sh) / 2;
-  }
-  
-  // Draw center-cropped raw stream onto the rendering pipeline canvas (without filter overlay lag)
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  ctx.restore();
-  
-  // 1. Process combined Exposure Value (EV) and ISO brightness + contrast scaling
+  // 1. Process combined Exposure Value (EV) and ISO brightness + contrast scaling + saturation shifts for moody/cinematic feel
   let brightness = 1.0;
   brightness *= (1.0 + appState.exposure * 0.4);
   let contrast = 1.0;
+  let saturation = 1.0;
   let grainOpacity = 0;
   
   if (appState.iso !== 'auto') {
     const isoVal = parseInt(appState.iso);
     if (isoVal === 50) {
       brightness *= 0.4;
+      contrast *= 1.15;
+      saturation *= 1.10;
     } else if (isoVal === 100) {
       brightness *= 0.7;
+      contrast *= 1.05;
+      saturation *= 1.0;
     } else if (isoVal === 200) {
       brightness *= 1.0;
+      contrast *= 1.0;
+      saturation *= 1.0;
     } else if (isoVal === 400) {
-      brightness *= 1.4;
-      grainOpacity = 0.03;
+      brightness *= 1.35;
+      contrast *= 1.02;
+      saturation *= 0.95;
+      grainOpacity = 0.04;
     } else if (isoVal === 800) {
-      brightness *= 1.9;
-      contrast = 1.05;
-      grainOpacity = 0.06;
+      brightness *= 1.8;
+      contrast *= 1.08;
+      saturation *= 0.90;
+      grainOpacity = 0.08;
     } else if (isoVal === 1600) {
-      brightness *= 2.6;
-      contrast = 1.10;
-      grainOpacity = 0.10;
+      brightness *= 2.5;
+      contrast *= 1.15;
+      saturation *= 0.85;
+      grainOpacity = 0.14;
     } else if (isoVal === 3200) {
-      brightness *= 3.5;
-      contrast = 1.15;
-      grainOpacity = 0.15;
+      brightness *= 3.4;
+      contrast *= 1.25;
+      saturation *= 0.75;
+      grainOpacity = 0.22; // heavy dynamic film grain for artistic night mood shots
     }
+  }
+  
+  // EV moody grade: darker exposure enhances contrast and mutes highlights/colors
+  if (appState.exposure < 0) {
+    contrast *= (1.0 - appState.exposure * 0.15);
+    saturation *= (1.0 + appState.exposure * 0.12);
+  } else if (appState.exposure > 0) {
+    contrast *= (1.0 - appState.exposure * 0.1);
   }
   
   // 2. Process focus distance blur simulation (face sharpest at 70%)
@@ -409,49 +403,51 @@ function renderLoop() {
   }
   
   const finalBrightness = Math.max(10, Math.round(brightness * 100));
-  const finalContrast = Math.round(contrast * 100);
-  let filterStr = `brightness(${finalBrightness}%) contrast(${finalContrast}%)`;
+  const finalContrast = Math.max(10, Math.round(contrast * 100));
+  const finalSaturate = Math.max(0, Math.round(saturation * 100));
+  let filterStr = `brightness(${finalBrightness}%) contrast(${finalContrast}%) saturate(${finalSaturate}%)`;
   if (blurPx > 0.1) {
     filterStr += ` blur(${blurPx.toFixed(1)}px)`;
   }
   
-  // Apply accumulative CSS filter adjustments directly to canvas DOM element, skipping DOM changes when unchanged
+  // Apply accumulative CSS filter adjustments directly to native video DOM element, skipping DOM updates when unchanged
   if (filterStr !== lastAppliedFilter) {
-    canvas.style.filter = filterStr;
+    video.style.filter = filterStr;
     lastAppliedFilter = filterStr;
   }
   
-  // Make sure 2D context filter is none to avoid canvas redraw lag
-  ctx.filter = 'none';
-  
-  // 3. Process Color Temperature / White Balance tint overlay (optimized using source-over for pure GPU speed)
-  if (appState.whitebalance !== 'auto') {
-    const temp = parseInt(appState.whitebalance);
-    ctx.save();
-    if (temp > 5500) {
-      // Warm Amber tint for high kelvins (orange overlay)
-      const opacity = ((temp - 5500) / 2500) * 0.15; // max opacity 15%
-      ctx.fillStyle = `rgba(229, 193, 88, ${opacity})`;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    } else if (temp < 5500) {
-      // Cool Ice Blue tint for low kelvins (cyan overlay)
-      const opacity = ((5500 - temp) / 3000) * 0.15; // max opacity 15%
-      ctx.fillStyle = `rgba(64, 156, 255, ${opacity})`;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    ctx.restore();
+  // Mirror state styling checks (sync class triggers)
+  if (appState.mirror) {
+    video.classList.remove('unmirrored');
+  } else {
+    video.classList.add('unmirrored');
   }
   
-  // 4. Process ISO High gain chromatic dynamic grain noise overlay (reusing pre-compiled patterns)
-  if (grainOpacity > 0 && noisePatterns.length > 0) {
-    ctx.save();
-    ctx.globalAlpha = grainOpacity;
-    ctx.globalCompositeOperation = 'overlay';
-    // Randomize pattern among dynamic pre-compiled cache to make grain buzz (no runtime compilation)
-    const pattern = noisePatterns[Math.floor(Math.random() * noisePatterns.length)];
-    ctx.fillStyle = pattern;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
+  // 3. Process Color Temperature / White Balance tint overlay (using GPU composite source-over overlays)
+  if (appState.whitebalance !== 'auto') {
+    const temp = parseInt(appState.whitebalance);
+    if (temp > 5500) {
+      const opacity = ((temp - 5500) / 2500) * 0.18;
+      wbOverlay.style.backgroundColor = 'rgba(229, 193, 88, 1)';
+      wbOverlay.style.opacity = opacity;
+    } else if (temp < 5500) {
+      const opacity = ((5500 - temp) / 3000) * 0.18;
+      wbOverlay.style.backgroundColor = 'rgba(64, 156, 255, 1)';
+      wbOverlay.style.opacity = opacity;
+    } else {
+      wbOverlay.style.opacity = 0;
+    }
+  } else {
+    wbOverlay.style.opacity = 0;
+  }
+  
+  // 4. Process ISO High gain chromatic dynamic grain noise overlay via CSS animations
+  if (grainOpacity > 0) {
+    grainOverlay.style.opacity = grainOpacity;
+    grainOverlay.classList.add('active');
+  } else {
+    grainOverlay.style.opacity = 0;
+    grainOverlay.classList.remove('active');
   }
   
   // 5. Downsample frame low-frequency and calculate luminance histogram
@@ -475,16 +471,45 @@ function drawHistogram() {
   let brightness = 1.0;
   brightness *= (1.0 + appState.exposure * 0.4);
   let contrast = 1.0;
+  let saturation = 1.0;
   if (appState.iso !== 'auto') {
     const isoVal = parseInt(appState.iso);
-    if (isoVal === 50) brightness *= 0.4;
-    else if (isoVal === 100) brightness *= 0.7;
-    else if (isoVal === 200) brightness *= 1.0;
-    else if (isoVal === 400) brightness *= 1.4;
-    else if (isoVal === 800) { brightness *= 1.9; contrast = 1.05; }
-    else if (isoVal === 1600) { brightness *= 2.6; contrast = 1.10; }
-    else if (isoVal === 3200) { brightness *= 3.5; contrast = 1.15; }
+    if (isoVal === 50) {
+      brightness *= 0.4;
+      contrast *= 1.15;
+      saturation *= 1.10;
+    } else if (isoVal === 100) {
+      brightness *= 0.7;
+      contrast *= 1.05;
+      saturation *= 1.0;
+    } else if (isoVal === 200) {
+      brightness *= 1.0;
+    } else if (isoVal === 400) {
+      brightness *= 1.35;
+      contrast *= 1.02;
+      saturation *= 0.95;
+    } else if (isoVal === 800) {
+      brightness *= 1.8;
+      contrast *= 1.08;
+      saturation *= 0.90;
+    } else if (isoVal === 1600) {
+      brightness *= 2.5;
+      contrast *= 1.15;
+      saturation *= 0.85;
+    } else if (isoVal === 3200) {
+      brightness *= 3.4;
+      contrast *= 1.25;
+      saturation *= 0.75;
+    }
   }
+  
+  if (appState.exposure < 0) {
+    contrast *= (1.0 - appState.exposure * 0.15);
+    saturation *= (1.0 + appState.exposure * 0.12);
+  } else if (appState.exposure > 0) {
+    contrast *= (1.0 - appState.exposure * 0.1);
+  }
+  
   let blurPx = 0;
   if (appState.focus !== 'auto') {
     const focVal = parseInt(appState.focus);
@@ -493,8 +518,9 @@ function drawHistogram() {
   }
   
   const finalBrightness = Math.max(10, Math.round(brightness * 100));
-  const finalContrast = Math.round(contrast * 100);
-  let filterStr = `brightness(${finalBrightness}%) contrast(${finalContrast}%)`;
+  const finalContrast = Math.max(10, Math.round(contrast * 100));
+  const finalSaturate = Math.max(0, Math.round(saturation * 100));
+  let filterStr = `brightness(${finalBrightness}%) contrast(${finalContrast}%) saturate(${finalSaturate}%)`;
   if (blurPx > 0.1) {
     filterStr += ` blur(${blurPx.toFixed(1)}px)`;
   }
@@ -525,11 +551,11 @@ function drawHistogram() {
     const temp = parseInt(appState.whitebalance);
     miniCtx.save();
     if (temp > 5500) {
-      const opacity = ((temp - 5500) / 2500) * 0.15;
+      const opacity = ((temp - 5500) / 2500) * 0.18;
       miniCtx.fillStyle = `rgba(229, 193, 88, ${opacity})`;
       miniCtx.fillRect(0, 0, 40, 30);
     } else if (temp < 5500) {
-      const opacity = ((5500 - temp) / 3000) * 0.15;
+      const opacity = ((5500 - temp) / 3000) * 0.18;
       miniCtx.fillStyle = `rgba(64, 156, 255, ${opacity})`;
       miniCtx.fillRect(0, 0, 40, 30);
     }
@@ -771,32 +797,52 @@ async function executeSnapshot() {
   let brightness = 1.0;
   brightness *= (1.0 + appState.exposure * 0.4);
   let contrast = 1.0;
+  let saturation = 1.0;
   let grainOpacity = 0;
   
   if (appState.iso !== 'auto') {
     const isoVal = parseInt(appState.iso);
     if (isoVal === 50) {
       brightness *= 0.4;
+      contrast *= 1.15;
+      saturation *= 1.10;
     } else if (isoVal === 100) {
       brightness *= 0.7;
+      contrast *= 1.05;
+      saturation *= 1.0;
     } else if (isoVal === 200) {
       brightness *= 1.0;
+      contrast *= 1.0;
+      saturation *= 1.0;
     } else if (isoVal === 400) {
-      brightness *= 1.4;
-      grainOpacity = 0.03;
+      brightness *= 1.35;
+      contrast *= 1.02;
+      saturation *= 0.95;
+      grainOpacity = 0.04;
     } else if (isoVal === 800) {
-      brightness *= 1.9;
-      contrast = 1.05;
-      grainOpacity = 0.06;
+      brightness *= 1.8;
+      contrast *= 1.08;
+      saturation *= 0.90;
+      grainOpacity = 0.08;
     } else if (isoVal === 1600) {
-      brightness *= 2.6;
-      contrast = 1.10;
-      grainOpacity = 0.10;
+      brightness *= 2.5;
+      contrast *= 1.15;
+      saturation *= 0.85;
+      grainOpacity = 0.14;
     } else if (isoVal === 3200) {
-      brightness *= 3.5;
-      contrast = 1.15;
-      grainOpacity = 0.15;
+      brightness *= 3.4;
+      contrast *= 1.25;
+      saturation *= 0.75;
+      grainOpacity = 0.22;
     }
+  }
+  
+  // EV moody grade: darker exposure enhances contrast and mutes highlights/colors
+  if (appState.exposure < 0) {
+    contrast *= (1.0 - appState.exposure * 0.15);
+    saturation *= (1.0 + appState.exposure * 0.12);
+  } else if (appState.exposure > 0) {
+    contrast *= (1.0 - appState.exposure * 0.1);
   }
   
   let blurPx = 0;
@@ -813,8 +859,9 @@ async function executeSnapshot() {
   }
   
   const finalBrightness = Math.max(10, Math.round(brightness * 100));
-  const finalContrast = Math.round(contrast * 100);
-  let filterStr = `brightness(${finalBrightness}%) contrast(${finalContrast}%)`;
+  const finalContrast = Math.max(10, Math.round(contrast * 100));
+  const finalSaturate = Math.max(0, Math.round(saturation * 100));
+  let filterStr = `brightness(${finalBrightness}%) contrast(${finalContrast}%) saturate(${finalSaturate}%)`;
   if (blurPx > 0.1) {
     filterStr += ` blur(${blurPx.toFixed(1)}px)`;
   }
@@ -1067,13 +1114,13 @@ function setupUIListeners() {
   });
   
   // 10. Photo Viewfinder manual tap-to-focus indicator lock
-  canvas.addEventListener('click', (e) => {
-    const rect = canvas.getBoundingClientRect();
+  video.addEventListener('click', (e) => {
+    const rect = video.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
     // Position target focus ring indicator relative to the viewport container parent
-    const parentRect = canvas.parentElement.getBoundingClientRect();
+    const parentRect = video.parentElement.getBoundingClientRect();
     const ringX = e.clientX - parentRect.left;
     const ringY = e.clientY - parentRect.top;
     manualFocusRing.style.left = `${ringX}px`;
