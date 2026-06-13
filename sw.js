@@ -1,4 +1,4 @@
-const CACHE_NAME = 'procam-front-v2';
+const CACHE_NAME = 'procam-front-v3';
 const ASSETS = [
   './',
   './index.html',
